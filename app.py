@@ -339,10 +339,22 @@ def cosense_post(project: str, pat: str, title: str, lines: list[str]) -> str:
             f"{COSENSE_API}/pages/{quote(project, safe='')}/{quote(title, safe='')}",
             timeout=20, allow_redirects=False,
         )
-        if existing.status_code == 200:
-            raise ValueError("同名のページが既に存在します。別のタイトルにしてください。")
-        if existing.status_code != 404:
-            raise RuntimeError(f"Cosenseのページ確認に失敗しました（HTTP {existing.status_code}）。")
+        
+    if existing.status_code == 200:
+        page_data = existing.json()
+
+        # Cosenseは未作成ページでもHTTP 200を返す
+        # persistent=True の場合のみ既存ページと判断する
+        if page_data.get("persistent") is True:
+            raise ValueError(
+                "同名のページが既に存在します。別のタイトルにしてください。"
+            )
+
+    elif existing.status_code != 404:
+        raise RuntimeError(
+            f"Cosenseのページ確認に失敗しました（HTTP {existing.status_code}）。"
+        )
+
 
         changes = [
             {"_insert": "_end", "lines": {"id": secrets.token_hex(12), "text": text}}
