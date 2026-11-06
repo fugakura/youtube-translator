@@ -435,7 +435,8 @@ st.markdown("""
     width: 100% !important;
     min-width: 0 !important;
     max-width: 100% !important;
-    padding: 0.6rem 20px 2.5rem !important;
+    padding: 0 20px 2.5rem !important;
+    padding-top: calc(3.5rem + env(safe-area-inset-top, 0px)) !important;
     padding-left: calc(20px + env(safe-area-inset-left)) !important;
     padding-right: calc(20px + env(safe-area-inset-right)) !important;
   }
