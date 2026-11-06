@@ -407,15 +407,18 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# Mobile-first layout (iPhone 15: approx. 393 CSS px in portrait).
+# Mobile-first reader: preserve comfortable horizontal gutters on iPhone 15.
+# Keep the browser tab title via set_page_config, but no on-page app title.
 st.markdown("""
 <style>
 [data-testid="stMainBlockContainer"] {
   max-width: 900px;
-  padding-top: 1.3rem;
+  padding-top: 1.2rem;
   padding-bottom: 3rem;
 }
 [data-testid="stTextArea"] textarea {
+  box-sizing: border-box !important;
+  padding: 14px 16px !important;
   line-height: 1.85 !important;
   font-size: 15px !important;
   resize: none !important;
@@ -424,43 +427,47 @@ st.markdown("""
   -webkit-overflow-scrolling: touch;
 }
 @media (max-width: 640px) {
-  [data-testid="stMainBlockContainer"] {
-    padding: 0.75rem 0.75rem 2.5rem !important;
+  [data-testid="stAppViewContainer"] {
+    overflow-x: hidden !important;
   }
-  h1 { font-size: 1.48rem !important; line-height: 1.35 !important; }
-  h2 { font-size: 1.13rem !important; }
+  [data-testid="stMainBlockContainer"] {
+    box-sizing: border-box !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    padding: 0.6rem 20px 2.5rem !important;
+    padding-left: calc(20px + env(safe-area-inset-left)) !important;
+    padding-right: calc(20px + env(safe-area-inset-right)) !important;
+  }
+  [data-testid="stTextArea"],
+  [data-testid="stVideo"],
+  [data-testid="stVideo"] iframe,
+  [data-testid="stVideo"] video {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    box-sizing: border-box !important;
+  }
   [data-testid="stTextArea"] textarea {
     height: 43dvh !important;
     min-height: 280px !important;
     max-height: 56dvh !important;
-    font-size: 15px !important;
   }
-  [data-testid="stVideo"] iframe,
-  [data-testid="stVideo"] video {
-    max-width: 100% !important;
-  }
+  h2 { font-size: 1.13rem !important; }
 }
 </style>
 """, unsafe_allow_html=True)
-
-st.title("YouTube 翻訳")
 
 missing = missing_drive_variables()
 api_key = os.getenv("OPENAI_API_KEY", "").strip()
 
 
 def render_result(result: dict) -> None:
-    st.markdown(f"**{result.get('title') or '翻訳結果'}**")
+    # The player is the first visible item. The text view selector lives at
+    # the bottom of the result screen (rendered after the search expander).
     st.video(result["video_url"], autoplay=False)
-
-    selection = st.radio(
-        "表示するテキスト",
-        ["日本語訳", "原文", "原文＋日本語訳"],
-        horizontal=True,
-        index=0,
-        key=f"text_view_{result['video_id']}",
-    )
-    text_index = {"原文": 0, "日本語訳": 1, "原文＋日本語訳": 2}[selection]
+    selection = st.session_state.get(f"text_view_{result['video_id']}", "日本語訳")
+    text_index = {"原文": 0, "日本語訳": 1, "原文＋日本語訳": 2}.get(selection, 1)
     file_name, displayed_text = result["texts"][text_index]
     displayed_text = clean_display_header(displayed_text)
     display_hash = hashlib.sha256(displayed_text.encode("utf-8")).hexdigest()[:12]
@@ -561,6 +568,15 @@ if result:
     render_result(result)
     with st.expander("別の動画を検索・再翻訳する"):
         url_input, mode, force_refresh, submitted = search_form(compact=True)
+    # Changing this control reruns Streamlit. On the next run render_result
+    # reads the new value from session_state before displaying the textarea.
+    st.radio(
+        "表示するテキスト",
+        ["日本語訳", "原文", "原文＋日本語訳"],
+        horizontal=True,
+        index=0,
+        key=f"text_view_{result['video_id']}",
+    )
 else:
     st.caption("YouTubeのURLを貼り付けると、保存済みの翻訳を検索し、なければ作成します。")
     url_input, mode, force_refresh, submitted = search_form()
