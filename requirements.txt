@@ -1,6 +1,0 @@
-streamlit>=1.40,<2
-yt-dlp[default]
-youtube-transcript-api>=1.2,<2
-openai>=2.0
-python-dotenv>=1.0,<2
-requests>=2.32,<3
