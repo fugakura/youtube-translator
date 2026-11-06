@@ -1,0 +1,15 @@
+{
+  "$schema": "https://schema.railpack.com",
+  "provider": "python",
+  "packages": {
+    "python": "3.12",
+    "deno": "latest"
+  },
+  "deploy": {
+    "aptPackages": [
+      "...",
+      "ffmpeg"
+    ],
+    "startCommand": "streamlit run app.py --server.address=0.0.0.0 --server.port=$PORT --server.headless=true"
+  }
+}
