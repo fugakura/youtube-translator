@@ -21,6 +21,7 @@ import yt_dlp
 from dotenv import load_dotenv
 from openai import OpenAI
 from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api.proxies import GenericProxyConfig, WebshareProxyConfig
 
 load_dotenv()
 
@@ -31,6 +32,65 @@ TRANSCRIPTION_MODEL = "gpt-transcribe"
 TRANSLATION_MODEL = "gpt-4.1-mini"
 AUDIO_SEGMENT_SECONDS = 300
 COSENSE_API = "https://scrapbox.io/api"
+
+# Webshare Rotating Residential Proxy credentials.
+# Enter the BASE username (without the trailing "-rotate") in Railway Variables.
+WEBSHARE_PROXY_USERNAME = os.getenv("WEBSHARE_PROXY_USERNAME", "").strip()
+WEBSHARE_PROXY_PASSWORD = os.getenv("WEBSHARE_PROXY_PASSWORD", "").strip()
+# Optional alternative: use the full HTTP proxy URL copied from Webshare.
+YOUTUBE_PROXY_URL = os.getenv("YOUTUBE_PROXY_URL", "").strip()
+
+
+def _proxy_credentials() -> tuple[str, str]:
+    """Validate username/password without leaking them to the app UI."""
+    if bool(WEBSHARE_PROXY_USERNAME) != bool(WEBSHARE_PROXY_PASSWORD):
+        raise ValueError(
+            "WEBSHARE_PROXY_USERNAME と WEBSHARE_PROXY_PASSWORD は両方設定してください。"
+        )
+    return WEBSHARE_PROXY_USERNAME.removesuffix("-rotate"), WEBSHARE_PROXY_PASSWORD
+
+
+def youtube_proxy_url() -> str | None:
+    """HTTP proxy URL used by yt-dlp and optional YouTube metadata requests."""
+    if YOUTUBE_PROXY_URL:
+        if not YOUTUBE_PROXY_URL.startswith(("http://", "https://")):
+            raise ValueError("YOUTUBE_PROXY_URL は http:// または https:// で始めてください。")
+        return YOUTUBE_PROXY_URL
+    username, password = _proxy_credentials()
+    if not username:
+        return None
+    # Webshare rotates the exit IP with the -rotate username suffix.
+    username = quote(f"{username}-rotate", safe="")
+    password = quote(password, safe="")
+    return f"http://{username}:{password}@p.webshare.io:80"
+
+
+def transcript_api() -> YouTubeTranscriptApi:
+    """Proxy YouTube traffic only; OpenAI and Cosense are direct."""
+    if YOUTUBE_PROXY_URL:
+        proxy_url = youtube_proxy_url()
+        return YouTubeTranscriptApi(
+            proxy_config=GenericProxyConfig(http_url=proxy_url, https_url=proxy_url)
+        )
+    username, password = _proxy_credentials()
+    if username:
+        return YouTubeTranscriptApi(
+            proxy_config=WebshareProxyConfig(
+                proxy_username=username,
+                proxy_password=password,
+            )
+        )
+    return YouTubeTranscriptApi()
+
+
+def safe_error_text(error: Exception) -> str:
+    """Avoid exposing proxy credentials if a networking library includes them in errors."""
+    message = str(error)
+    for secret in (YOUTUBE_PROXY_URL, WEBSHARE_PROXY_USERNAME, WEBSHARE_PROXY_PASSWORD):
+        if secret:
+            message = message.replace(secret, "***")
+            message = message.replace(quote(secret, safe=""), "***")
+    return message
 
 
 def require_login() -> None:
@@ -88,7 +148,7 @@ def clean_caption(text: str) -> str:
 
 
 def caption_blocks(video_id: str) -> tuple[list[dict], str]:
-    transcripts = list(YouTubeTranscriptApi().list(video_id))
+    transcripts = list(transcript_api().list(video_id))
     if not transcripts:
         raise RuntimeError("字幕が見つかりません。")
 
@@ -145,6 +205,9 @@ def audio_blocks(video_id: str, client: OpenAI, report) -> list[dict]:
                 {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "64"}
             ],
         }
+        proxy_url = youtube_proxy_url()
+        if proxy_url:
+            options["proxy"] = proxy_url
         with yt_dlp.YoutubeDL(options) as ydl:
             ydl.download([url])
         if not audio_file.exists():
@@ -221,9 +284,11 @@ def render_bilingual(blocks: list[dict], url: str) -> str:
 def youtube_title(video_id: str) -> str:
     """Metadata is optional: transcription works even if oEmbed is blocked."""
     try:
+        proxy_url = youtube_proxy_url()
         response = requests.get(
             "https://www.youtube.com/oembed",
             params={"url": f"https://www.youtube.com/watch?v={video_id}", "format": "json"},
+            proxies={"http": proxy_url, "https": proxy_url} if proxy_url else None,
             timeout=8,
         )
         response.raise_for_status()
@@ -316,6 +381,10 @@ require_login()
 
 st.title("YouTube 文字起こし＆日本語翻訳")
 st.caption("YouTube → 字幕または音声認識 → 日本語翻訳 → TXTダウンロード / Cosense投稿")
+if YOUTUBE_PROXY_URL or (WEBSHARE_PROXY_USERNAME and WEBSHARE_PROXY_PASSWORD):
+    st.caption("YouTube接続: プロキシ有効")
+else:
+    st.warning("YouTube接続: プロキシ未設定（RailwayのIPでは取得に失敗する場合があります）")
 
 api_key = os.getenv("OPENAI_API_KEY", "").strip()
 if not api_key:
@@ -350,7 +419,7 @@ if st.button("文字起こし・翻訳を開始", type="primary", disabled=not a
                 blocks, source_language = caption_blocks(video_id)
                 st.info(f"字幕を使用します（言語: {source_language}）。")
             except Exception as caption_error:
-                st.info(f"字幕を利用できないため音声認識に切り替えます: {caption_error}")
+                st.info(f"字幕を利用できないため音声認識に切り替えます: {safe_error_text(caption_error)}")
 
         if not blocks:
             blocks = audio_blocks(video_id, client, report)
@@ -389,7 +458,7 @@ if st.button("文字起こし・翻訳を開始", type="primary", disabled=not a
         st.success("文字起こし・翻訳が完了しました。")
     except Exception as exc:
         progress.empty()
-        st.error(f"処理に失敗しました: {exc}")
+        st.error(f"処理に失敗しました: {safe_error_text(exc)}")
 
 result = st.session_state.get("translation_result")
 if result:
@@ -433,4 +502,4 @@ if result:
                 st.success("Cosenseにページを作成しました。")
                 st.markdown(f"[作成したページを開く]({url})")
             except Exception as exc:
-                st.error(f"Cosenseへの投稿に失敗しました: {exc}")
+                st.error(f"Cosenseへの投稿に失敗しました: {safe_error_text(exc)}")
