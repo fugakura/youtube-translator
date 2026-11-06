@@ -1,0 +1,12 @@
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+*.pyc
+outputs/
+.streamlit/secrets.toml
+credentials.json
+client_secret*.json
+token.json
+*.pem
